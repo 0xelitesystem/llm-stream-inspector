@@ -1,0 +1,2123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Stream Inspector - parse and diagnose a raw SSE dump from a streaming LLM response</title>
+<meta name="description" content="Paste a raw Server-Sent Events dump from a streaming LLM response and get it parsed, reassembled, and diagnosed: missing terminal events, truncation, and tool-call arguments that do not join into valid JSON. Runs entirely in your browser.">
+<link rel="canonical" href="https://0xelitesystem.github.io/llm-stream-inspector/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="LLM Stream Inspector">
+<meta property="og:description" content="Wire-level debugging for streaming LLM responses. Parse a raw SSE dump, reassemble the text and tool calls, and get a named diagnosis for truncation and invalid tool-argument JSON.">
+<meta property="og:url" content="https://0xelitesystem.github.io/llm-stream-inspector/">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23111820'/><text x='50' y='73' font-size='58' text-anchor='middle' fill='%23f0a52e' font-family='monospace'>&gt;_</text></svg>">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "LLM Stream Inspector",
+  "description": "Paste a raw Server-Sent Events dump from a streaming LLM response and get it parsed, reassembled, and diagnosed: missing terminal events, truncation, and tool-call arguments that do not join into valid JSON. Runs entirely in the browser.",
+  "url": "https://0xelitesystem.github.io/llm-stream-inspector/",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Any",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161c24;
+  --surface-2: #1b222b;
+  --rule: #2a323d;
+  --rule-soft: #222a34;
+  --ink: #e7ebf0;
+  --ink-soft: #98a3b2;
+  --amber: #f0a52e;
+  --amber-soft: rgba(240, 165, 46, 0.14);
+  --teal: #4ec9a5;
+  --teal-soft: rgba(78, 201, 165, 0.13);
+  --blue: #6aa9ff;
+  --red: #ff7a7a;
+  --red-soft: rgba(255, 122, 122, 0.13);
+  --yellow: #e3c04a;
+  --yellow-soft: rgba(227, 192, 74, 0.13);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+:root[data-theme="light"] {
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --surface-2: #f1efe9;
+  --rule: #d8d4ca;
+  --rule-soft: #e6e3db;
+  --ink: #10161d;
+  --ink-soft: #55606d;
+  --amber: #9c5c00;
+  --amber-soft: rgba(156, 92, 0, 0.1);
+  --teal: #0f6f59;
+  --teal-soft: rgba(15, 111, 89, 0.1);
+  --blue: #1c4fa3;
+  --red: #a51f1f;
+  --red-soft: rgba(165, 31, 31, 0.09);
+  --yellow: #7a5b00;
+  --yellow-soft: rgba(122, 91, 0, 0.1);
+  --shadow: 0 1px 2px rgba(16, 22, 29, 0.08);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  padding: 1.75rem 1rem 3rem;
+  min-height: 100vh;
+}
+
+.wrap { max-width: 1120px; margin: 0 auto; }
+
+/* ---- masthead ---- */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 1.1rem;
+  margin-bottom: 1.5rem;
+}
+h1 {
+  font-family: var(--mono);
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+h1 .prompt { color: var(--amber); }
+.tag {
+  color: var(--ink-soft);
+  max-width: 62ch;
+  margin-top: 0.4rem;
+  font-size: 0.94rem;
+}
+
+/* ---- buttons, inputs ---- */
+.btn {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.btn:hover { border-color: var(--amber); color: var(--amber); }
+.btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.btn-primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #14181d;
+  font-weight: 600;
+}
+:root[data-theme="light"] .btn-primary { color: #fffdf8; }
+.btn-primary:hover { filter: brightness(1.08); color: #14181d; }
+:root[data-theme="light"] .btn-primary:hover { color: #fffdf8; }
+.btn-ghost { background: transparent; }
+.btn-mini { padding: 0.25rem 0.55rem; font-size: 0.74rem; }
+
+textarea, select {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.6rem 0.7rem;
+  width: 100%;
+}
+textarea {
+  min-height: 230px;
+  resize: vertical;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+textarea:focus-visible, select:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; border-color: var(--amber); }
+select { width: auto; max-width: 100%; padding: 0.4rem 0.5rem; }
+
+.lbl {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin-bottom: 0.4rem;
+}
+.lbl.inline { display: inline-block; margin: 0 0.45rem 0 0; }
+
+/* ---- cards ---- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 1.1rem 1.15rem 1.25rem;
+  margin-bottom: 1.1rem;
+  box-shadow: var(--shadow);
+}
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+}
+.card-title {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--amber);
+}
+.card-title .num { color: var(--ink-soft); margin-right: 0.35rem; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.help { color: var(--ink-soft); font-size: 0.86rem; margin-top: 0.6rem; }
+.help code, .payload code, code.inline {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--surface-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: 0.05rem 0.25rem;
+}
+.privacy {
+  margin-top: 0.85rem;
+  padding: 0.6rem 0.75rem;
+  border-left: 2px solid var(--teal);
+  background: var(--teal-soft);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  border-radius: 0 4px 4px 0;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+  margin-top: 0.85rem;
+}
+.status { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-soft); }
+.status.bad { color: var(--red); }
+
+/* ---- empty state ---- */
+.empty h2 {
+  font-size: 1.02rem;
+  font-family: var(--mono);
+  margin-bottom: 0.55rem;
+}
+.empty p { color: var(--ink-soft); font-size: 0.9rem; margin-bottom: 0.6rem; max-width: 78ch; }
+.empty ul { color: var(--ink-soft); font-size: 0.9rem; margin: 0 0 0.6rem 1.1rem; }
+.empty li { margin-bottom: 0.25rem; }
+
+/* ---- detection ---- */
+.verdict { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.7rem; }
+.badge {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.15rem 0.45rem;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+.badge-strong { border-color: var(--amber); color: var(--amber); background: var(--amber-soft); font-weight: 600; }
+.badge-ok { border-color: var(--teal); color: var(--teal); background: var(--teal-soft); }
+.badge-bad { border-color: var(--red); color: var(--red); background: var(--red-soft); }
+.badge-warn { border-color: var(--yellow); color: var(--yellow); background: var(--yellow-soft); }
+.reasons { list-style: none; font-size: 0.86rem; color: var(--ink-soft); }
+.reasons li { padding-left: 1.1rem; position: relative; margin-bottom: 0.2rem; }
+.reasons li::before { content: "+"; position: absolute; left: 0; color: var(--teal); font-family: var(--mono); }
+.reasons li.neg::before { content: "-"; color: var(--ink-soft); }
+
+/* ---- findings ---- */
+.finding {
+  border: 1px solid var(--rule);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 0.6rem;
+  background: var(--surface-2);
+}
+.finding.critical { border-left-color: var(--red); }
+.finding.warn { border-left-color: var(--yellow); }
+.finding.ok { border-left-color: var(--teal); }
+.finding.info { border-left-color: var(--blue); }
+.finding-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.finding-title { font-weight: 600; font-size: 0.95rem; }
+.finding-id { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-soft); }
+.finding-summary { font-size: 0.9rem; margin-top: 0.2rem; }
+.finding-explain { font-size: 0.87rem; color: var(--ink-soft); margin-top: 0.4rem; }
+.finding-evidence {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  margin: 0.5rem 0 0 0;
+  list-style: none;
+  border-top: 1px dashed var(--rule);
+  padding-top: 0.4rem;
+}
+.finding-evidence li { overflow-wrap: anywhere; margin-bottom: 0.15rem; }
+
+/* ---- output blocks ---- */
+.out-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: 1rem 0 0.4rem;
+}
+.out-label {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+pre.out {
+  font-family: var(--mono);
+  font-size: 0.83rem;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.7rem 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 22rem;
+  overflow: auto;
+}
+pre.out.bad { border-color: var(--red); }
+.muted { color: var(--ink-soft); font-size: 0.88rem; }
+
+.tool {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  margin-bottom: 0.7rem;
+  overflow: hidden;
+}
+.tool-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-2);
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--rule);
+}
+.tool-name { font-family: var(--mono); font-size: 0.85rem; font-weight: 600; }
+.tool-meta { font-family: var(--mono); font-size: 0.74rem; color: var(--ink-soft); }
+.tool-body { padding: 0.6rem 0.7rem; }
+.tool-body pre.out { max-height: 16rem; }
+.tool-note { font-size: 0.85rem; color: var(--ink-soft); margin-top: 0.45rem; }
+
+/* ---- stats ---- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+}
+.stat {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--surface-2);
+  padding: 0.55rem 0.65rem;
+}
+.stat .k {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+  display: block;
+}
+.stat .v {
+  font-family: var(--mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  display: block;
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
+}
+.badges { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.85rem; }
+
+/* ---- tables ---- */
+.table-scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.83rem; }
+th, td { text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+th {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-soft);
+  background: var(--surface-2);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+tbody tr:last-child td { border-bottom: none; }
+td.num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
+td.type { font-family: var(--mono); white-space: nowrap; }
+td.type.bad { color: var(--red); }
+.payload { font-family: var(--mono); font-size: 0.78rem; overflow-wrap: anywhere; color: var(--ink-soft); }
+.payload strong { color: var(--ink); font-weight: 500; }
+.bar-track {
+  min-width: 60px;
+  height: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar-fill { height: 100%; background: var(--amber); display: block; }
+.bar-fill.tool { background: var(--teal); }
+.bar-fill.meta { background: var(--blue); }
+.bar-fill.bad { background: var(--red); }
+.more-row { text-align: center; padding: 0.6rem; }
+
+footer {
+  border-top: 1px solid var(--rule);
+  margin-top: 1.75rem;
+  padding-top: 1rem;
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.2rem;
+  justify-content: space-between;
+}
+footer a { color: var(--amber); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+
+@media (max-width: 600px) {
+  body { padding: 1.1rem 0.7rem 2.2rem; font-size: 14.5px; }
+  .card { padding: 0.9rem 0.8rem 1rem; }
+  h1 { font-size: 1.18rem; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); }
+  .stat .v { font-size: 1rem; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div>
+    <h1><span class="prompt">&gt;_</span> LLM Stream Inspector</h1>
+    <p class="tag">Paste a raw Server-Sent Events dump from a streaming LLM response. Get every event parsed, the assistant text and tool calls reassembled, and the failure named.</p>
+  </div>
+  <button class="btn btn-ghost" id="theme-toggle" type="button">Light</button>
+</header>
+
+<section class="card">
+  <div class="card-head">
+    <h2 class="card-title"><span class="num">01</span>Raw SSE dump</h2>
+    <div class="card-actions">
+      <button class="btn" id="sample-anthropic" type="button">Load sample (Anthropic)</button>
+      <button class="btn" id="sample-openai" type="button">Load sample (OpenAI)</button>
+      <button class="btn btn-ghost" id="clear" type="button">Clear</button>
+    </div>
+  </div>
+  <label class="lbl" for="dump">Response body, exactly as it came off the wire</label>
+  <textarea id="dump" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off"
+    placeholder="event: content_block_delta&#10;data: {&quot;type&quot;:&quot;content_block_delta&quot;,&quot;index&quot;:0,&quot;delta&quot;:{&quot;type&quot;:&quot;text_delta&quot;,&quot;text&quot;:&quot;Hello&quot;}}&#10;&#10;event: message_stop&#10;data: {&quot;type&quot;:&quot;message_stop&quot;}"></textarea>
+  <p class="help">Works with what <code>curl -N</code> prints, what you copy out of the browser devtools EventStream or Response tab, and what your own request logger writes. CRLF and LF line endings, blank-line event separation, multi-line <code>data:</code> fields, <code>event:</code> names, <code>:</code> comment keep-alives, and a trailing <code>data: [DONE]</code> sentinel are all handled. A dump cut off mid-line is expected input, not an error.</p>
+  <div class="toolbar">
+    <button class="btn btn-primary" id="analyze" type="button">Analyze</button>
+    <div>
+      <label class="lbl inline" for="format">Wire format</label>
+      <select id="format">
+        <option value="auto">Auto-detect</option>
+        <option value="anthropic">Anthropic Messages streaming</option>
+        <option value="openai">OpenAI chat completions streaming</option>
+        <option value="unknown">Plain SSE (no reassembly rules)</option>
+      </select>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </div>
+  <p class="privacy">Nothing you paste leaves this page. A streamed response carries the user prompt, retrieved documents, and tool arguments, which is exactly the data you should not upload to a stranger's parser, so all of the work here happens in your browser and the page makes no network requests of any kind.</p>
+</section>
+
+<section class="card empty" id="empty">
+  <h2>Paste a dump, or press Load sample</h2>
+  <p>This is wire-level debugging for streaming responses: the layer where "the model stopped mid-sentence" and "my tool call arguments are invalid JSON" actually get diagnosed. From inside an SDK those two failures are nearly invisible, a short string and a <code>JSON.parse</code> error. In the raw event stream they are obvious, and they are usually the same bug.</p>
+  <p>What you get back:</p>
+  <ul>
+    <li><strong>Detected wire format</strong> with the evidence used, plus a manual override.</li>
+    <li><strong>Reassembled output</strong>: the concatenated assistant text, and each tool call rebuilt by joining its streamed JSON argument fragments.</li>
+    <li><strong>Named findings</strong>: missing terminal event, output cap hit, content block opened but never closed, tool argument JSON that does not parse, malformed events, error events, reported token usage.</li>
+    <li><strong>Event timeline</strong>: every event in order with its type, byte size, and the delta it carried.</li>
+  </ul>
+  <p>The Anthropic sample is a stream that was cut mid tool call, so the truncation findings fire. The OpenAI sample is a healthy stream that ends properly, for comparison.</p>
+</section>
+
+<div id="results" hidden>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title"><span class="num">02</span>Detected wire format</h2>
+    </div>
+    <div class="verdict" id="detect-verdict"></div>
+    <ul class="reasons" id="detect-reasons"></ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title"><span class="num">03</span>Findings</h2>
+      <div class="card-actions">
+        <button class="btn btn-mini" id="copy-report" type="button">Copy report</button>
+      </div>
+    </div>
+    <div id="findings"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title"><span class="num">04</span>Reassembled output</h2>
+    </div>
+    <div id="reassembly"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title"><span class="num">05</span>Stream stats</h2>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="badges" id="bytype"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title"><span class="num">06</span>Event timeline</h2>
+      <span class="tool-meta" id="timeline-note"></span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="num" scope="col">#</th>
+            <th scope="col">Event type</th>
+            <th class="num" scope="col">Bytes</th>
+            <th scope="col">Size</th>
+            <th scope="col">Payload carried</th>
+          </tr>
+        </thead>
+        <tbody id="timeline"></tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div>LLM Stream Inspector. Single file, no dependencies, MIT licensed. <a href="https://github.com/0xelitesystem/llm-stream-inspector">Source on GitHub</a>.</div>
+  <div><a href="https://elitesystem.ai">An elitesystem.ai tool</a></div>
+</footer>
+
+</div>
+
+<script>
+/* =========================================================================
+   PART 1: pure core.
+   Every function below takes input and returns a result object. No DOM, no
+   globals touched, no side effects. Safe to lift out of this file and run in
+   Node as-is.
+   ========================================================================= */
+
+var ANTHROPIC_EVENT_TYPES = [
+  'message_start', 'content_block_start', 'content_block_delta',
+  'content_block_stop', 'message_delta', 'message_stop', 'ping', 'error'
+];
+var ANTHROPIC_DELTA_TYPES = [
+  'text_delta', 'input_json_delta', 'thinking_delta', 'signature_delta', 'citations_delta'
+];
+var ANTHROPIC_TOOL_BLOCKS = ['tool_use', 'server_tool_use', 'mcp_tool_use'];
+
+/* Byte length of a string as UTF-8, computed without any platform API so this
+   behaves the same in a browser and in Node. */
+function utf8ByteLength(str) {
+  var s = String(str == null ? '' : str);
+  var bytes = 0;
+  for (var i = 0; i < s.length; i++) {
+    var code = s.charCodeAt(i);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < s.length) {
+      var next = s.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) { bytes += 4; i++; }
+      else { bytes += 3; }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+function normalizeNewlines(raw) {
+  return String(raw == null ? '' : raw).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function numOr(value, fallback) {
+  return typeof value === 'number' && isFinite(value) ? value : fallback;
+}
+
+/* Trim without a regex. A regex like /^\s+|\s+$/ backtracks quadratically over
+   a long run of whitespace that is not at an edge, and a pasted dump is
+   attacker-shaped input, so use the linear built-in. */
+function trimStr(value) {
+  return String(value == null ? '' : value).trim();
+}
+
+/* A lookup table that cannot be answered by Object.prototype, so a key like
+   "constructor", "toString" or "__proto__" coming out of a pasted payload
+   misses cleanly instead of returning a function. */
+function lookupTable(source) {
+  var t = Object.create(null);
+  for (var k in source) {
+    if (Object.prototype.hasOwnProperty.call(source, k)) t[k] = source[k];
+  }
+  return t;
+}
+function lookup(table, key, fallback) {
+  var k = String(key == null ? '' : key);
+  return Object.prototype.hasOwnProperty.call(table, k) ? table[k] : fallback;
+}
+
+function safeJsonParse(text) {
+  try {
+    return { ok: true, value: JSON.parse(text), error: null };
+  } catch (err) {
+    return { ok: false, value: null, error: (err && err.message) ? String(err.message) : 'invalid JSON' };
+  }
+}
+
+function formatBytes(n) {
+  var b = numOr(n, 0);
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(b < 10240 ? 2 : 1) + ' KB';
+  return (b / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+/* -------------------------------------------------------------------------
+   SSE framing
+   ------------------------------------------------------------------------- */
+
+/* Parse a raw SSE body into discrete events, following the field rules of the
+   event-stream format: one event is a run of "field: value" lines terminated
+   by a blank line; lines beginning with ":" are comments; repeated "data:"
+   lines are joined with a newline. A trailing event with no blank line after
+   it (the normal shape of a killed connection) is still returned. */
+function parseSseDump(raw) {
+  var text = normalizeNewlines(raw);
+  var lines = text.split('\n');
+  var events = [];
+  var comments = [];
+  var current = null;
+
+  function startRecord(lineNumber) {
+    return {
+      lineNumber: lineNumber,
+      eventName: null,
+      dataLines: [],
+      id: null,
+      retry: null,
+      rawLines: [],
+      otherFields: [],
+      terminated: false
+    };
+  }
+
+  function flush(terminated) {
+    if (!current) return;
+    current.terminated = !!terminated;
+    events.push(finalizeSseEvent(current, events.length + 1));
+    current = null;
+  }
+
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (line === '') { flush(true); continue; }
+    if (line.charAt(0) === ':') {
+      comments.push({ lineNumber: i + 1, text: line.slice(1).replace(/^ /, '') });
+      continue;
+    }
+    if (!current) current = startRecord(i + 1);
+    current.rawLines.push(line);
+    var colon = line.indexOf(':');
+    var field, value;
+    if (colon === -1) { field = line; value = ''; }
+    else {
+      field = line.slice(0, colon);
+      value = line.slice(colon + 1);
+      if (value.charAt(0) === ' ') value = value.slice(1);
+    }
+    if (field === 'data') current.dataLines.push(value);
+    else if (field === 'event') current.eventName = value;
+    else if (field === 'id') current.id = value;
+    else if (field === 'retry') current.retry = value;
+    else current.otherFields.push({ field: field, value: value });
+  }
+  flush(false);
+
+  return {
+    events: events,
+    comments: comments,
+    lineCount: lines.length,
+    totalBytes: utf8ByteLength(text),
+    trailingEventUnterminated: events.length > 0 && events[events.length - 1].terminated === false
+  };
+}
+
+function finalizeSseEvent(record, index) {
+  var data = record.dataLines.join('\n');
+  var trimmed = trimStr(data);
+  var ev = {
+    index: index,
+    lineNumber: record.lineNumber,
+    eventName: record.eventName,
+    data: data,
+    dataLineCount: record.dataLines.length,
+    id: record.id,
+    retry: record.retry,
+    otherFields: record.otherFields,
+    terminated: record.terminated,
+    bytes: utf8ByteLength(record.rawLines.join('\n')),
+    isDone: trimmed === '[DONE]',
+    json: null,
+    parseError: null
+  };
+  if (!ev.isDone && trimmed !== '') {
+    var parsed = safeJsonParse(data);
+    if (parsed.ok) ev.json = parsed.value;
+    else ev.parseError = parsed.error;
+  }
+  ev.type = resolveEventType(ev);
+  return ev;
+}
+
+function resolveEventType(ev) {
+  if (ev.isDone) return '[DONE]';
+  if (ev.json && typeof ev.json === 'object' && typeof ev.json.type === 'string') return ev.json.type;
+  if (ev.eventName) return ev.eventName;
+  if (ev.parseError) return '(unparsed)';
+  if (ev.dataLineCount === 0) return '(no data field)';
+  return '(untyped)';
+}
+
+/* -------------------------------------------------------------------------
+   Format detection
+   ------------------------------------------------------------------------- */
+
+function detectWireFormat(events) {
+  var c = {
+    anthropicTypes: 0, deltaTypes: 0, messageStart: 0, contentBlockIndex: 0,
+    chunkObject: 0, choices: 0, deltaObject: 0, finishReason: 0, done: 0,
+    withJson: 0
+  };
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    if (ev.isDone) c.done++;
+    var j = ev.json;
+    if (!j || typeof j !== 'object') continue;
+    c.withJson++;
+    if (typeof j.type === 'string' && ANTHROPIC_EVENT_TYPES.indexOf(j.type) !== -1) c.anthropicTypes++;
+    if (j.delta && typeof j.delta === 'object' && typeof j.delta.type === 'string'
+      && ANTHROPIC_DELTA_TYPES.indexOf(j.delta.type) !== -1) c.deltaTypes++;
+    if (j.type === 'message_start' && j.message && typeof j.message === 'object') c.messageStart++;
+    if ((j.type === 'content_block_start' || j.type === 'content_block_delta') && typeof j.index === 'number') c.contentBlockIndex++;
+    if (j.object === 'chat.completion.chunk') c.chunkObject++;
+    if (Array.isArray(j.choices)) {
+      c.choices++;
+      var ch = j.choices[0];
+      if (ch && typeof ch === 'object') {
+        if (ch.delta && typeof ch.delta === 'object') c.deltaObject++;
+        if (typeof ch.finish_reason === 'string' && ch.finish_reason) c.finishReason++;
+      }
+    }
+  }
+
+  var anthropicScore = c.anthropicTypes * 3 + c.deltaTypes * 3 + c.messageStart * 4 + c.contentBlockIndex;
+  var openaiScore = c.chunkObject * 4 + c.choices * 3 + c.deltaObject * 3 + c.finishReason * 3 + c.done * 4;
+
+  var reasons = [];
+  function add(positive, text) { reasons.push({ positive: positive, text: text }); }
+
+  if (c.anthropicTypes) add(true, c.anthropicTypes + ' event(s) carry an Anthropic streaming type such as message_start or content_block_delta.');
+  if (c.deltaTypes) add(true, c.deltaTypes + ' delta(s) use an Anthropic delta type (text_delta, input_json_delta, thinking_delta, signature_delta).');
+  if (c.messageStart) add(true, 'A message_start event carries a message object with model and usage.');
+  if (c.chunkObject) add(true, c.chunkObject + ' event(s) declare object "chat.completion.chunk".');
+  if (c.choices) add(true, c.choices + ' event(s) carry a choices array.');
+  if (c.deltaObject) add(true, c.deltaObject + ' event(s) carry choices[0].delta.');
+  if (c.finishReason) add(true, c.finishReason + ' event(s) carry a finish_reason on a choice.');
+  if (c.done) add(true, 'A "data: [DONE]" sentinel is present, which OpenAI-shaped streams send and Anthropic streams do not.');
+  if (!c.withJson) add(false, 'No event data field parsed as JSON, so there are no shape signals to read.');
+  if (c.withJson && !anthropicScore && !openaiScore) add(false, 'Events parsed as JSON but matched neither vendor shape.');
+
+  var format = 'unknown';
+  if (anthropicScore > 0 || openaiScore > 0) format = anthropicScore >= openaiScore ? 'anthropic' : 'openai';
+
+  return {
+    format: format,
+    anthropicScore: anthropicScore,
+    openaiScore: openaiScore,
+    counts: c,
+    reasons: reasons,
+    ambiguous: anthropicScore > 0 && openaiScore > 0
+  };
+}
+
+/* -------------------------------------------------------------------------
+   Reassembly. All three return the same surface so callers stay uniform.
+   ------------------------------------------------------------------------- */
+
+function joinToolFragments(fragments) {
+  var joined = fragments.join('');
+  var out = {
+    joined: joined,
+    fragmentCount: fragments.length,
+    valid: false,
+    error: null,
+    pretty: null,
+    empty: trimStr(joined) === ''
+  };
+  if (out.empty) {
+    out.error = 'no argument fragments were streamed';
+    return out;
+  }
+  var parsed = safeJsonParse(joined);
+  if (parsed.ok) {
+    out.valid = true;
+    try { out.pretty = JSON.stringify(parsed.value, null, 2); } catch (err) { out.pretty = joined; }
+  } else {
+    out.error = parsed.error;
+  }
+  return out;
+}
+
+function reassembleAnthropic(events) {
+  var blocks = [];
+  var byIndex = Object.create(null);
+  var orphanDeltas = [];
+  var errors = [];
+  var stopReasons = [];
+  var usage = null;
+  var pings = 0;
+  var sawTerminal = false;
+  var meta = {
+    messageId: null, model: null, role: null,
+    sawMessageStart: false, sawMessageDelta: false, stopSequence: null
+  };
+
+  function getBlock(i, viaDelta) {
+    var key = String(i);
+    if (!byIndex[key]) {
+      byIndex[key] = {
+        blockIndex: i, type: null, name: null, id: null,
+        text: '', thinking: '', signature: '', fragments: [],
+        deltaCount: 0, opened: false, closed: false, implicit: !!viaDelta
+      };
+      blocks.push(byIndex[key]);
+    }
+    return byIndex[key];
+  }
+
+  function mergeUsage(u) {
+    if (!u || typeof u !== 'object') return;
+    if (!usage) usage = {};
+    for (var k in u) {
+      if (Object.prototype.hasOwnProperty.call(u, k) && typeof u[k] === 'number') usage[k] = u[k];
+    }
+  }
+
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    var j = ev.json;
+    if (!j || typeof j !== 'object') continue;
+    var t = typeof j.type === 'string' ? j.type : (ev.eventName || '');
+
+    if (t === 'message_start') {
+      meta.sawMessageStart = true;
+      var m = (j.message && typeof j.message === 'object') ? j.message : {};
+      if (typeof m.id === 'string') meta.messageId = m.id;
+      if (typeof m.model === 'string') meta.model = m.model;
+      if (typeof m.role === 'string') meta.role = m.role;
+      mergeUsage(m.usage);
+      if (typeof m.stop_reason === 'string' && m.stop_reason) {
+        stopReasons.push({ value: m.stop_reason, where: 'message_start, event ' + ev.index });
+      }
+    } else if (t === 'content_block_start') {
+      var bs = getBlock(numOr(j.index, blocks.length), false);
+      bs.opened = true;
+      bs.implicit = false;
+      var cb = (j.content_block && typeof j.content_block === 'object') ? j.content_block : {};
+      if (typeof cb.type === 'string') bs.type = cb.type;
+      if (typeof cb.name === 'string') bs.name = cb.name;
+      if (typeof cb.id === 'string') bs.id = cb.id;
+      if (typeof cb.text === 'string' && cb.text) bs.text += cb.text;
+      if (typeof cb.thinking === 'string' && cb.thinking) bs.thinking += cb.thinking;
+    } else if (t === 'content_block_delta') {
+      var idx = numOr(j.index, 0);
+      var existed = !!byIndex[String(idx)];
+      var bd = getBlock(idx, true);
+      if (!existed && !bd.opened) {
+        orphanDeltas.push({ blockIndex: idx, eventIndex: ev.index });
+      }
+      bd.deltaCount++;
+      var d = (j.delta && typeof j.delta === 'object') ? j.delta : {};
+      if (d.type === 'text_delta' && typeof d.text === 'string') bd.text += d.text;
+      else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') bd.fragments.push(d.partial_json);
+      else if (d.type === 'thinking_delta' && typeof d.thinking === 'string') bd.thinking += d.thinking;
+      else if (d.type === 'signature_delta' && typeof d.signature === 'string') bd.signature += d.signature;
+      else if (typeof d.text === 'string') bd.text += d.text;
+    } else if (t === 'content_block_stop') {
+      getBlock(numOr(j.index, 0), false).closed = true;
+    } else if (t === 'message_delta') {
+      meta.sawMessageDelta = true;
+      var md = (j.delta && typeof j.delta === 'object') ? j.delta : {};
+      if (typeof md.stop_reason === 'string' && md.stop_reason) {
+        stopReasons.push({ value: md.stop_reason, where: 'message_delta, event ' + ev.index });
+      }
+      if (typeof md.stop_sequence === 'string') meta.stopSequence = md.stop_sequence;
+      mergeUsage(j.usage);
+    } else if (t === 'message_stop') {
+      sawTerminal = true;
+    } else if (t === 'ping') {
+      pings++;
+    } else if (t === 'error' || ev.eventName === 'error') {
+      var e = (j.error && typeof j.error === 'object') ? j.error : {};
+      errors.push({
+        type: typeof e.type === 'string' ? e.type : null,
+        message: typeof e.message === 'string' ? e.message : ev.data,
+        eventIndex: ev.index
+      });
+    }
+  }
+
+  var ordered = blocks.slice().sort(function (a, b) { return a.blockIndex - b.blockIndex; });
+  var text = '';
+  var thinking = '';
+  var toolCalls = [];
+  for (var k = 0; k < ordered.length; k++) {
+    var b = ordered[k];
+    if (b.text) text += b.text;
+    if (b.thinking) thinking += b.thinking;
+    var isToolBlock = b.type !== null && ANTHROPIC_TOOL_BLOCKS.indexOf(b.type) !== -1;
+    if (isToolBlock || b.fragments.length > 0) {
+      var joined = joinToolFragments(b.fragments);
+      toolCalls.push({
+        key: 'block ' + b.blockIndex,
+        label: b.name || '(tool name not in this dump)',
+        id: b.id,
+        blockIndex: b.blockIndex,
+        blockType: b.type || '(unknown, no content_block_start seen)',
+        closed: b.closed,
+        fragmentCount: joined.fragmentCount,
+        joined: joined.joined,
+        valid: joined.valid,
+        empty: joined.empty,
+        error: joined.error,
+        pretty: joined.pretty
+      });
+    }
+  }
+
+  return {
+    format: 'anthropic',
+    text: text,
+    thinking: thinking,
+    blocks: ordered,
+    toolCalls: toolCalls,
+    usage: usage,
+    usageLabel: 'usage (Anthropic token fields)',
+    stopReasons: stopReasons,
+    stopReasonField: 'stop_reason',
+    sawTerminal: sawTerminal,
+    terminalName: 'message_stop',
+    errors: errors,
+    pings: pings,
+    orphanDeltas: orphanDeltas,
+    meta: meta
+  };
+}
+
+function reassembleOpenAI(events) {
+  var choices = [];
+  var byChoice = Object.create(null);
+  var errors = [];
+  var usage = null;
+  var sawTerminal = false;
+  var meta = { model: null, id: null, sawUsageChunk: false, role: null };
+
+  function getChoice(i) {
+    var key = String(i);
+    if (!byChoice[key]) {
+      byChoice[key] = {
+        index: i, text: '', refusal: '', role: null, finishReason: null,
+        deltaCount: 0, tools: [], byTool: Object.create(null)
+      };
+      choices.push(byChoice[key]);
+    }
+    return byChoice[key];
+  }
+
+  function getTool(choice, ti) {
+    var key = String(ti);
+    if (!choice.byTool[key]) {
+      choice.byTool[key] = { callIndex: ti, id: null, name: '', type: null, fragments: [] };
+      choice.tools.push(choice.byTool[key]);
+    }
+    return choice.byTool[key];
+  }
+
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    if (ev.isDone) { sawTerminal = true; continue; }
+    var j = ev.json;
+    if (!j || typeof j !== 'object') continue;
+
+    if (j.error) {
+      var eo = (typeof j.error === 'object') ? j.error : {};
+      errors.push({
+        type: typeof eo.type === 'string' ? eo.type : null,
+        message: typeof eo.message === 'string' ? eo.message : String(j.error),
+        eventIndex: ev.index
+      });
+    }
+    if (typeof j.model === 'string') meta.model = j.model;
+    if (typeof j.id === 'string') meta.id = j.id;
+    if (j.usage && typeof j.usage === 'object') { usage = j.usage; meta.sawUsageChunk = true; }
+    if (!Array.isArray(j.choices)) continue;
+
+    for (var ci = 0; ci < j.choices.length; ci++) {
+      var ch = j.choices[ci];
+      if (!ch || typeof ch !== 'object') continue;
+      var c = getChoice(numOr(ch.index, ci));
+      var d = (ch.delta && typeof ch.delta === 'object') ? ch.delta : {};
+      c.deltaCount++;
+      if (typeof d.role === 'string') { c.role = d.role; meta.role = d.role; }
+      if (typeof d.content === 'string') c.text += d.content;
+      else if (Array.isArray(d.content)) {
+        for (var pi = 0; pi < d.content.length; pi++) {
+          var part = d.content[pi];
+          if (part && typeof part === 'object' && typeof part.text === 'string') c.text += part.text;
+        }
+      }
+      if (typeof d.refusal === 'string') c.refusal += d.refusal;
+      if (Array.isArray(d.tool_calls)) {
+        for (var ti = 0; ti < d.tool_calls.length; ti++) {
+          var tc = d.tool_calls[ti];
+          if (!tc || typeof tc !== 'object') continue;
+          var t = getTool(c, numOr(tc.index, c.tools.length));
+          if (typeof tc.id === 'string' && tc.id) t.id = tc.id;
+          if (typeof tc.type === 'string' && tc.type) t.type = tc.type;
+          var fn = tc['function'];
+          if (fn && typeof fn === 'object') {
+            if (typeof fn.name === 'string' && fn.name) t.name += fn.name;
+            if (typeof fn.arguments === 'string') t.fragments.push(fn.arguments);
+          }
+        }
+      }
+      if (d.function_call && typeof d.function_call === 'object') {
+        var legacy = getTool(c, -1);
+        legacy.type = 'function_call (legacy field)';
+        if (typeof d.function_call.name === 'string' && d.function_call.name) legacy.name += d.function_call.name;
+        if (typeof d.function_call.arguments === 'string') legacy.fragments.push(d.function_call.arguments);
+      }
+      if (typeof ch.finish_reason === 'string' && ch.finish_reason) c.finishReason = ch.finish_reason;
+    }
+  }
+
+  var ordered = choices.slice().sort(function (a, b) { return a.index - b.index; });
+  var text = '';
+  var blocks = [];
+  var toolCalls = [];
+  var stopReasons = [];
+  for (var k = 0; k < ordered.length; k++) {
+    var cc = ordered[k];
+    text += cc.text;
+    blocks.push({
+      blockIndex: cc.index,
+      type: 'choice',
+      name: null,
+      id: null,
+      text: cc.text,
+      thinking: '',
+      signature: '',
+      fragments: [],
+      deltaCount: cc.deltaCount,
+      opened: true,
+      closed: !!cc.finishReason,
+      implicit: false
+    });
+    if (cc.finishReason) stopReasons.push({ value: cc.finishReason, where: 'finish_reason on choice ' + cc.index });
+    var sorted = cc.tools.slice().sort(function (a, b) { return a.callIndex - b.callIndex; });
+    for (var ti2 = 0; ti2 < sorted.length; ti2++) {
+      var tool = sorted[ti2];
+      var joined = joinToolFragments(tool.fragments);
+      toolCalls.push({
+        key: 'choice ' + cc.index + ', tool_calls[' + tool.callIndex + ']',
+        label: tool.name || '(tool name not in this dump)',
+        id: tool.id,
+        blockIndex: cc.index,
+        blockType: tool.type || 'function',
+        closed: !!cc.finishReason,
+        fragmentCount: joined.fragmentCount,
+        joined: joined.joined,
+        valid: joined.valid,
+        empty: joined.empty,
+        error: joined.error,
+        pretty: joined.pretty
+      });
+    }
+  }
+
+  return {
+    format: 'openai',
+    text: text,
+    thinking: '',
+    blocks: blocks,
+    toolCalls: toolCalls,
+    usage: usage,
+    usageLabel: 'usage (OpenAI token fields)',
+    stopReasons: stopReasons,
+    stopReasonField: 'finish_reason',
+    sawTerminal: sawTerminal,
+    terminalName: '[DONE]',
+    errors: errors,
+    pings: 0,
+    orphanDeltas: [],
+    meta: meta,
+    choices: ordered
+  };
+}
+
+/* Best-effort probe for unknown SSE shapes: look for text at the handful of
+   paths that streaming APIs actually use, and say plainly that this is a
+   guess rather than a reassembly rule. */
+function probeGenericText(j) {
+  if (!j || typeof j !== 'object') return null;
+  if (j.delta && typeof j.delta === 'object') {
+    if (typeof j.delta.text === 'string') return j.delta.text;
+    if (typeof j.delta.content === 'string') return j.delta.content;
+  }
+  if (Array.isArray(j.choices) && j.choices[0] && typeof j.choices[0] === 'object') {
+    var d = j.choices[0].delta;
+    if (d && typeof d === 'object' && typeof d.content === 'string') return d.content;
+    if (typeof j.choices[0].text === 'string') return j.choices[0].text;
+  }
+  if (typeof j.text === 'string') return j.text;
+  if (typeof j.content === 'string') return j.content;
+  if (typeof j.response === 'string') return j.response;
+  if (typeof j.token === 'string') return j.token;
+  return null;
+}
+
+function reassembleGeneric(events) {
+  var text = '';
+  var probed = 0;
+  var sawTerminal = false;
+  var errors = [];
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    if (ev.isDone) { sawTerminal = true; continue; }
+    var j = ev.json;
+    if (!j || typeof j !== 'object') continue;
+    if (j.error) {
+      var eo = (typeof j.error === 'object') ? j.error : {};
+      errors.push({
+        type: typeof eo.type === 'string' ? eo.type : null,
+        message: typeof eo.message === 'string' ? eo.message : String(j.error),
+        eventIndex: ev.index
+      });
+    }
+    var found = probeGenericText(j);
+    if (found !== null) { text += found; probed++; }
+  }
+  return {
+    format: 'unknown',
+    text: text,
+    thinking: '',
+    blocks: [],
+    toolCalls: [],
+    usage: null,
+    usageLabel: 'usage',
+    stopReasons: [],
+    stopReasonField: null,
+    sawTerminal: sawTerminal,
+    terminalName: '[DONE]',
+    errors: errors,
+    pings: 0,
+    orphanDeltas: [],
+    meta: { probedEvents: probed, bestEffort: true }
+  };
+}
+
+/* -------------------------------------------------------------------------
+   Timeline and stats
+   ------------------------------------------------------------------------- */
+
+function truncateForDisplay(str, max) {
+  var s = String(str == null ? '' : str);
+  if (s.length <= max) return s;
+  return s.slice(0, max) + '...';
+}
+
+/* What did this single event actually carry? Returns a kind (used for the bar
+   color) and a short human description. */
+function eventPayload(ev, format) {
+  if (ev.isDone) return { kind: 'meta', text: 'end-of-stream sentinel' };
+  if (ev.parseError) return { kind: 'bad', text: 'unparsed data: ' + truncateForDisplay(ev.data, 120) };
+  var j = ev.json;
+  if (!j || typeof j !== 'object') {
+    if (ev.dataLineCount === 0) return { kind: 'meta', text: 'no data field' };
+    return { kind: 'text', text: truncateForDisplay(ev.data, 140) };
+  }
+
+  if (format === 'anthropic') {
+    var t = typeof j.type === 'string' ? j.type : '';
+    if (t === 'content_block_delta') {
+      var d = (j.delta && typeof j.delta === 'object') ? j.delta : {};
+      if (d.type === 'text_delta') return { kind: 'text', text: JSON.stringify(String(d.text == null ? '' : d.text)) };
+      if (d.type === 'input_json_delta') return { kind: 'tool', text: 'arg fragment ' + JSON.stringify(String(d.partial_json == null ? '' : d.partial_json)) };
+      if (d.type === 'thinking_delta') return { kind: 'text', text: 'thinking ' + JSON.stringify(truncateForDisplay(d.thinking, 100)) };
+      if (d.type === 'signature_delta') return { kind: 'meta', text: 'signature fragment, ' + String(d.signature || '').length + ' chars' };
+      return { kind: 'text', text: truncateForDisplay(JSON.stringify(d), 140) };
+    }
+    if (t === 'content_block_start') {
+      var cb = (j.content_block && typeof j.content_block === 'object') ? j.content_block : {};
+      var open = 'opens block ' + numOr(j.index, 0) + ', type ' + (cb.type || '?');
+      if (cb.name) open += ', name ' + cb.name;
+      return { kind: 'meta', text: open };
+    }
+    if (t === 'content_block_stop') return { kind: 'meta', text: 'closes block ' + numOr(j.index, 0) };
+    if (t === 'message_start') {
+      var m = (j.message && typeof j.message === 'object') ? j.message : {};
+      return { kind: 'meta', text: 'model ' + (m.model || '?') + ', role ' + (m.role || '?') + (m.usage ? ', usage reported' : '') };
+    }
+    if (t === 'message_delta') {
+      var md = (j.delta && typeof j.delta === 'object') ? j.delta : {};
+      var bits = [];
+      if (md.stop_reason) bits.push('stop_reason ' + md.stop_reason);
+      if (md.stop_sequence) bits.push('stop_sequence ' + JSON.stringify(md.stop_sequence));
+      if (j.usage && typeof j.usage === 'object' && typeof j.usage.output_tokens === 'number') bits.push('output_tokens ' + j.usage.output_tokens);
+      return { kind: 'meta', text: bits.length ? bits.join(', ') : 'message-level update' };
+    }
+    if (t === 'message_stop') return { kind: 'meta', text: 'terminal event' };
+    if (t === 'ping') return { kind: 'meta', text: 'keep-alive' };
+    if (t === 'error') {
+      var e = (j.error && typeof j.error === 'object') ? j.error : {};
+      return { kind: 'bad', text: 'error ' + (e.type || '?') + ': ' + truncateForDisplay(e.message || '', 120) };
+    }
+  }
+
+  if (format === 'openai') {
+    if (Array.isArray(j.choices) && j.choices.length) {
+      var ch = j.choices[0] || {};
+      var dd = (ch.delta && typeof ch.delta === 'object') ? ch.delta : {};
+      if (typeof dd.content === 'string' && dd.content !== '') return { kind: 'text', text: JSON.stringify(dd.content) };
+      if (Array.isArray(dd.tool_calls) && dd.tool_calls.length) {
+        var tc = dd.tool_calls[0] || {};
+        var fn = tc['function'] || {};
+        if (typeof fn.arguments === 'string' && fn.arguments !== '') return { kind: 'tool', text: 'arg fragment ' + JSON.stringify(fn.arguments) };
+        if (fn.name) return { kind: 'meta', text: 'opens tool call ' + fn.name + (tc.id ? ' (' + tc.id + ')' : '') };
+        return { kind: 'meta', text: 'tool_calls delta' };
+      }
+      if (typeof dd.refusal === 'string' && dd.refusal !== '') return { kind: 'bad', text: 'refusal ' + JSON.stringify(dd.refusal) };
+      if (typeof ch.finish_reason === 'string' && ch.finish_reason) return { kind: 'meta', text: 'finish_reason ' + ch.finish_reason };
+      if (typeof dd.role === 'string') return { kind: 'meta', text: 'opens role ' + dd.role };
+      return { kind: 'meta', text: 'empty delta' };
+    }
+    if (j.usage && typeof j.usage === 'object') return { kind: 'meta', text: 'usage chunk' };
+    if (j.error) return { kind: 'bad', text: 'error payload' };
+  }
+
+  if (j.error) return { kind: 'bad', text: 'error payload: ' + truncateForDisplay(JSON.stringify(j.error), 120) };
+  var probe = probeGenericText(j);
+  if (probe !== null) return { kind: 'text', text: JSON.stringify(truncateForDisplay(probe, 120)) };
+  return { kind: 'meta', text: truncateForDisplay(JSON.stringify(j), 140) };
+}
+
+function buildTimeline(events, format) {
+  var maxBytes = 0;
+  var i;
+  for (i = 0; i < events.length; i++) if (events[i].bytes > maxBytes) maxBytes = events[i].bytes;
+  var rows = [];
+  for (i = 0; i < events.length; i++) {
+    var ev = events[i];
+    var payload = eventPayload(ev, format);
+    rows.push({
+      index: ev.index,
+      type: ev.type,
+      bad: !!ev.parseError,
+      bytes: ev.bytes,
+      barPercent: maxBytes > 0 ? Math.max(2, Math.round((ev.bytes / maxBytes) * 100)) : 0,
+      kind: payload.kind,
+      payload: payload.text
+    });
+  }
+  return { rows: rows, maxBytes: maxBytes };
+}
+
+function computeStats(parsed, model, format) {
+  var byType = Object.create(null);
+  var parseErrors = 0;
+  var doneCount = 0;
+  var i;
+  for (i = 0; i < parsed.events.length; i++) {
+    var ev = parsed.events[i];
+    byType[ev.type] = (byType[ev.type] || 0) + 1;
+    if (ev.parseError) parseErrors++;
+    if (ev.isDone) doneCount++;
+  }
+  var typeList = [];
+  for (var k in byType) {
+    if (Object.prototype.hasOwnProperty.call(byType, k)) typeList.push({ type: k, count: byType[k] });
+  }
+  typeList.sort(function (a, b) { return b.count - a.count || (a.type < b.type ? -1 : 1); });
+
+  var validTools = 0;
+  for (i = 0; i < model.toolCalls.length; i++) if (model.toolCalls[i].valid) validTools++;
+
+  return {
+    eventCount: parsed.events.length,
+    totalBytes: parsed.totalBytes,
+    commentCount: parsed.comments.length,
+    lineCount: parsed.lineCount,
+    byType: typeList,
+    distinctTypes: typeList.length,
+    contentBlocks: model.blocks.length,
+    blockLabel: format === 'openai' ? 'Choices' : 'Content blocks',
+    textChars: model.text.length,
+    thinkingChars: model.thinking.length,
+    toolCalls: model.toolCalls.length,
+    validToolCalls: validTools,
+    parseErrors: parseErrors,
+    doneCount: doneCount,
+    pings: model.pings
+  };
+}
+
+/* -------------------------------------------------------------------------
+   Diagnosis
+   ------------------------------------------------------------------------- */
+
+/* Built once, with a null prototype, so a stop_reason of "constructor" out of a
+   pasted payload cannot return Object instead of a note. */
+var OPENAI_FINISH_NOTES = lookupTable({
+  stop: 'The model finished on its own or hit a stop sequence. Normal completion.',
+  length: 'Output cap. See the output-cap finding.',
+  tool_calls: 'The model stopped to call a tool. Run the tool and send the result back to continue.',
+  function_call: 'Legacy function-call stop. Same idea as tool_calls, older field name.',
+  content_filter: 'A content filter cut the response. Treat the text as incomplete.'
+});
+var ANTHROPIC_STOP_NOTES = lookupTable({
+  end_turn: 'The model finished its turn on its own. Normal completion.',
+  max_tokens: 'Output cap. See the output-cap finding.',
+  stop_sequence: 'A configured stop sequence was hit, so the text ends where you told it to.',
+  tool_use: 'The model stopped to call a tool. Execute the tool and send a tool_result back to continue.',
+  pause_turn: 'A server-side tool loop hit its iteration limit. Resend the user message plus this assistant response to resume; do not append a "continue" message.',
+  refusal: 'Safety classifiers declined the request. The content array may be empty or partial, and this arrives as a normal 200 response, not an error.',
+  model_context_window_exceeded: 'The context window filled up. This is not the output cap: compact or split the conversation instead of raising max_tokens.'
+});
+
+function stopReasonNote(value, format) {
+  if (format === 'openai') {
+    return lookup(OPENAI_FINISH_NOTES, value, 'Not a finish_reason this tool knows. Check the provider documentation.');
+  }
+  return lookup(ANTHROPIC_STOP_NOTES, value, 'Not a stop_reason this tool knows. Check the provider documentation.');
+}
+
+function finding(id, status, title, summary, explain, evidence) {
+  return {
+    id: id, status: status, title: title, summary: summary,
+    explain: explain || '', evidence: evidence || []
+  };
+}
+
+function diagnoseStream(parsed, format, model) {
+  var out = [];
+  var events = parsed.events;
+  var i;
+
+  if (events.length === 0) {
+    out.push(finding('no-events', 'warn', 'No SSE events found',
+      'Nothing in the input parsed as an event.',
+      'An event is one or more "field: value" lines followed by a blank line. If you pasted a single pretty-printed JSON body, that is a non-streaming response: read its stop_reason and content directly instead. If you pasted a hex dump or a log line per event, strip the wrapper first so each line starts with a field name.'));
+    return out;
+  }
+
+  /* 1. terminal event */
+  var stopValues = [];
+  for (i = 0; i < model.stopReasons.length; i++) stopValues.push(model.stopReasons[i].value);
+
+  if (format === 'anthropic') {
+    if (model.sawTerminal) {
+      out.push(finding('terminal-event', 'ok', 'Stream reached a terminal event',
+        'message_stop is present, so the server sent the whole response it meant to send.',
+        'A complete Anthropic stream ends with message_delta (which carries stop_reason and final usage) then message_stop. Both are accounted for here, so what is reassembled below is the full response body.'));
+    } else {
+      var missing = [];
+      if (!model.meta.sawMessageDelta) missing.push('message_delta (stop_reason)');
+      missing.push('message_stop');
+      out.push(finding('terminal-event', 'critical', 'Stream ended without a terminal event',
+        'No message_stop event. Missing: ' + missing.join(', ') + '.',
+        'The connection ended before the model finished, so everything reassembled below is a partial response: the last sentence stops mid-thought and any tool arguments are half written. This is the classic "the model got cut off" bug, and it is not a model behaviour problem. Usual causes are a client read timeout, a proxy or load balancer idle timeout closing a long-lived response, a serverless function or container hitting its execution limit, or the process being killed. Note that the HTTP status was already 200 by the time the stream started, so nothing in your error handling fired.',
+        parsed.trailingEventUnterminated ? ['The last event has no blank line after it, which is the signature of a dump cut mid-stream rather than a stream that ended cleanly.'] : []));
+    }
+  } else if (format === 'openai') {
+    if (model.sawTerminal) {
+      out.push(finding('terminal-event', 'ok', 'Stream reached a terminal event',
+        'The "data: [DONE]" sentinel is present.',
+        'An OpenAI-shaped stream ends with a chunk carrying finish_reason, then the literal line "data: [DONE]". Both are accounted for here.'));
+    } else if (stopValues.length) {
+      out.push(finding('terminal-event', 'warn', 'finish_reason arrived but no [DONE] sentinel',
+        'A choice reported finish_reason ' + JSON.stringify(stopValues[0]) + ', but the "data: [DONE]" line is missing.',
+        'The model finished generating, so the reassembled text is most likely complete, but the dump was cut before the sentinel. If your client loop breaks only on [DONE], it will hang or time out here instead of finishing. Break on finish_reason as well.'));
+    } else {
+      out.push(finding('terminal-event', 'critical', 'Stream ended without a terminal event',
+        'No "data: [DONE]" sentinel and no finish_reason on any choice.',
+        'The connection ended before the model finished, so the text reassembled below is partial and any tool arguments are half written. Usual causes are a client read timeout, a proxy or load balancer idle timeout closing a long-lived response, a serverless execution limit, or the process being killed. The HTTP status was already 200 by then, so nothing in your error handling fired.',
+        parsed.trailingEventUnterminated ? ['The last event has no blank line after it, which is the signature of a dump cut mid-stream.'] : []));
+    }
+  } else {
+    if (model.sawTerminal) {
+      out.push(finding('terminal-event', 'info', 'A [DONE] sentinel is present',
+        'The dump ends with a "data: [DONE]" line.',
+        'The wire format was not recognised, so there is no vendor rule to check beyond the sentinel. Nothing else about completeness can be asserted here.'));
+    } else {
+      out.push(finding('terminal-event', 'warn', 'No recognisable end-of-stream marker',
+        'No "data: [DONE]" line, and the format was not recognised.',
+        'Without a known format there is no terminal event to look for. Set the wire format manually above if you know what produced this, or check whether the last event looks cut off in the timeline.'));
+    }
+  }
+
+  /* 2. stop reason present and what it means */
+  if (model.stopReasonField) {
+    if (model.stopReasons.length === 0) {
+      out.push(finding('stop-reason', 'warn', 'No ' + model.stopReasonField + ' in the stream',
+        'The stream never reported why generation stopped.',
+        format === 'anthropic'
+          ? 'stop_reason arrives on message_delta near the end of a stream. Its absence is consistent with the stream being cut early rather than with a model that finished.'
+          : 'finish_reason arrives on the final chunk for each choice. Its absence is consistent with the stream being cut early rather than with a model that finished.'));
+    } else {
+      var lines = [];
+      for (i = 0; i < model.stopReasons.length; i++) {
+        var sr = model.stopReasons[i];
+        lines.push(sr.value + ' (' + sr.where + '): ' + stopReasonNote(sr.value, format));
+      }
+      out.push(finding('stop-reason', 'info', 'Reported ' + model.stopReasonField,
+        model.stopReasonField + ' = ' + stopValues.join(', ') + '.',
+        'This is the server telling you why generation ended. Read it before you debug anything else about the response content.',
+        lines));
+    }
+  }
+
+  /* 3. output cap */
+  var capValue = format === 'openai' ? 'length' : 'max_tokens';
+  var hitCap = stopValues.indexOf(capValue) !== -1;
+  if (hitCap) {
+    out.push(finding('output-cap', 'critical', 'Response hit the output token cap',
+      model.stopReasonField + ' = ' + capValue + '.',
+      'The response did not finish, it ran out of allowed output tokens. The text below ends exactly where the budget ran out, which is why it reads like a sentence that was interrupted. Raise the max output tokens for this request, or make the task produce less output. If a tool call was in flight when the cap hit, its arguments are also truncated and will not parse. Note that thinking or reasoning tokens are billed against the same output budget, so a request that thinks a lot can hit the cap with very little visible text.'));
+  }
+
+  /* 4. other notable stop reasons */
+  if (stopValues.indexOf('refusal') !== -1) {
+    out.push(finding('refusal', 'warn', 'The request was refused',
+      'stop_reason = refusal.',
+      'Safety classifiers declined the request. This arrives as a normal 200 response with a possibly empty content array, so code that reads content[0] without checking stop_reason first will break here rather than surface the refusal. The refusal category is on stop_details in the non-streaming response body.'));
+  }
+  if (stopValues.indexOf('pause_turn') !== -1) {
+    out.push(finding('paused-turn', 'info', 'Turn paused, not finished',
+      'stop_reason = pause_turn.',
+      'A server-side tool loop hit its iteration limit. This is resumable: send the same request again with the user message plus this assistant response appended, and the server picks up where it left off. Do not add a "continue" user message, and cap how many times you resume so a loop cannot run forever.'));
+  }
+  if (stopValues.indexOf('model_context_window_exceeded') !== -1) {
+    out.push(finding('context-window', 'critical', 'Context window exhausted',
+      'stop_reason = model_context_window_exceeded.',
+      'This is the input side, not the output cap. Raising max output tokens will not help. Compact the conversation, drop stale tool results, or split the work.'));
+  }
+  if (stopValues.indexOf('content_filter') !== -1) {
+    out.push(finding('content-filter', 'warn', 'A content filter ended the response',
+      'finish_reason = content_filter.',
+      'The provider cut generation. Treat the reassembled text as incomplete rather than as a finished answer.'));
+  }
+
+  /* 5. unclosed content blocks */
+  var unclosed = [];
+  for (i = 0; i < model.blocks.length; i++) {
+    var b = model.blocks[i];
+    if (!b.closed) {
+      unclosed.push('block ' + b.blockIndex + ' (type ' + (b.type || 'unknown') + ', ' + b.deltaCount + ' delta(s)' + (b.name ? ', name ' + b.name : '') + ')');
+    }
+  }
+  if (model.blocks.length > 0) {
+    if (unclosed.length === 0) {
+      out.push(finding('unclosed-block', 'ok', 'Every content block was closed',
+        model.blocks.length + ' block(s) opened and every one of them was closed.',
+        format === 'anthropic'
+          ? 'Each content_block_start has a matching content_block_stop, so no block was left hanging.'
+          : 'Every choice reported a finish_reason, which is the OpenAI equivalent of a closed block.'));
+    } else {
+      out.push(finding('unclosed-block', 'critical', 'Content block opened but never closed',
+        unclosed.length + ' of ' + model.blocks.length + ' block(s) never closed.',
+        format === 'anthropic'
+          ? 'A content block is opened by content_block_start and closed by content_block_stop. A block with deltas and no stop is proof the stream was cut while that block was still being written, so whatever it carried (text, tool arguments, thinking) is incomplete. If your accumulator only commits a block on content_block_stop, this content is silently dropped rather than truncated, which is worse to debug.'
+          : 'A choice that never reported finish_reason was still being written when the stream ended, so its content is incomplete.',
+        unclosed));
+    }
+  }
+
+  /* 6. tool argument JSON */
+  if (model.toolCalls.length > 0) {
+    var broken = [];
+    var okLines = [];
+    for (i = 0; i < model.toolCalls.length; i++) {
+      var tc = model.toolCalls[i];
+      if (tc.valid) {
+        okLines.push(tc.label + ' [' + tc.key + ']: ' + tc.fragmentCount + ' fragment(s) join into valid JSON.');
+      } else {
+        broken.push(tc.label + ' [' + tc.key + ']: ' + tc.fragmentCount + ' fragment(s) join into ' + tc.joined.length + ' chars that do not parse. ' + (tc.error || ''));
+      }
+    }
+    if (broken.length === 0) {
+      out.push(finding('tool-arg-json', 'ok', 'Tool call arguments parse as valid JSON',
+        'All ' + model.toolCalls.length + ' tool call(s) reassembled into valid JSON.',
+        'Argument fragments are only valid JSON once concatenated in order. They joined cleanly here.',
+        okLines));
+    } else {
+      out.push(finding('tool-arg-json', 'critical', 'Tool call arguments are not valid JSON',
+        broken.length + ' of ' + model.toolCalls.length + ' tool call(s) do not parse after joining their fragments.',
+        'This is the single most useful signal in a stream dump. Tool arguments are streamed as fragments of a JSON string ('
+          + (format === 'openai' ? 'delta.tool_calls[].function.arguments' : 'input_json_delta.partial_json')
+          + '), and each fragment on its own is almost never valid JSON: a fragment can end mid-key, mid-string, or mid-number. Only the concatenation is parseable, and only if the stream ran to completion. So there are exactly two causes for what you are seeing. Either the stream was cut before the arguments finished, in which case fix the truncation and the JSON fixes itself; or your code called JSON.parse on a fragment instead of on the joined string, in which case buffer per tool call index and parse once at the end. Check the joined string below against the fragment count: if it ends mid-token, it is truncation.',
+        broken.concat(okLines)));
+    }
+  }
+
+  /* 7. malformed events */
+  var malformed = [];
+  for (i = 0; i < events.length; i++) {
+    if (events[i].parseError) {
+      malformed.push('Event ' + events[i].index + ' (line ' + events[i].lineNumber + '): ' + events[i].parseError
+        + ' | data starts: ' + truncateForDisplay(events[i].data, 90));
+    }
+  }
+  if (malformed.length > 0) {
+    out.push(finding('malformed-event', 'critical', 'Malformed event that failed to parse',
+      malformed.length + ' event(s) carried a data payload that is not valid JSON.',
+      'If it is the last event, the connection was almost certainly cut mid-line: that is what a killed stream looks like, and a robust client discards the incomplete tail rather than throwing. If it is in the middle of the stream, something between the model and you rewrote the bytes: a proxy that re-chunks or buffers the body, a logger that split a long line, or a copy-paste that wrapped it. A JSON payload may legally contain a newline inside a string only as an escape, so a raw newline in the middle of an object means the framing was broken by something in the path.',
+      malformed));
+  }
+
+  /* 8. error events */
+  if (model.errors.length > 0) {
+    var errLines = [];
+    for (i = 0; i < model.errors.length; i++) {
+      var er = model.errors[i];
+      errLines.push('Event ' + er.eventIndex + ': ' + (er.type || 'error') + ' - ' + truncateForDisplay(er.message || '', 200));
+    }
+    out.push(finding('stream-error', 'critical', 'An error event is in the stream',
+      model.errors.length + ' error event(s) reported by the server.',
+      'The server aborted after the response had already started, so the HTTP status was 200 and your error handling probably never ran. An overloaded_error mid-stream is retryable; an invalid_request_error is not. Whatever was reassembled before the error is a partial response and should not be treated as an answer.',
+      errLines));
+  }
+
+  /* 9. deltas for a block that was never opened */
+  if (model.orphanDeltas.length > 0) {
+    var orphanLines = [];
+    for (i = 0; i < model.orphanDeltas.length; i++) {
+      orphanLines.push('Block ' + model.orphanDeltas[i].blockIndex + ' first seen at event ' + model.orphanDeltas[i].eventIndex + ' with no content_block_start.');
+    }
+    out.push(finding('orphan-delta', 'warn', 'Delta arrived for a block that was never opened',
+      model.orphanDeltas.length + ' block(s) received deltas with no opening event.',
+      'The front of this dump is missing, which usually means the copy started mid-stream rather than that the server misbehaved. Reassembly still works because deltas carry their own block index, but the block type and any tool name live on the opening event, so they are unknown here. Re-capture from the first byte if you need them.',
+      orphanLines));
+  }
+
+  /* 10. usage */
+  if (model.usage) {
+    var usageLines = [];
+    for (var uk in model.usage) {
+      if (Object.prototype.hasOwnProperty.call(model.usage, uk)) usageLines.push(uk + ': ' + model.usage[uk]);
+    }
+    if (usageLines.length) {
+      out.push(finding('usage', 'info', 'The stream reported token usage',
+        usageLines.length + ' usage field(s) present.',
+        format === 'anthropic'
+          ? 'Anthropic streams report input tokens on message_start and final output tokens on message_delta, so a truncated stream often has input counts and no final output count. Cache read and cache creation counts, when present, are what tell you whether prompt caching actually hit.'
+          : 'OpenAI-shaped streams only include a usage chunk when the request asked for one, so an absent usage block does not mean anything went wrong.',
+        usageLines));
+    }
+  } else if (format !== 'unknown') {
+    out.push(finding('usage', 'info', 'No token usage reported',
+      'The stream carried no usage fields.',
+      format === 'anthropic'
+        ? 'Expected if the dump is missing its head (message_start carries input tokens) or its tail (message_delta carries final output tokens).'
+        : 'Expected unless the request explicitly asked the stream to include usage.'));
+  }
+
+  /* 11. nothing came back */
+  if (model.text.length === 0 && model.toolCalls.length === 0) {
+    out.push(finding('empty-content', 'warn', 'No content was reassembled',
+      'Zero characters of text and no tool calls.',
+      'The events parsed, but none of them carried output. That happens when the dump is only the head of a stream (message_start plus pings), when every event is a keep-alive, when a refusal produced an empty content array, or when the wire format was misidentified. Try overriding the wire format above.'));
+  }
+
+  var order = lookupTable({ critical: 0, warn: 1, info: 2, ok: 3 });
+  return out.sort(function (a, b) { return lookup(order, a.status, 9) - lookup(order, b.status, 9); });
+}
+
+/* -------------------------------------------------------------------------
+   Entry point
+   ------------------------------------------------------------------------- */
+
+function analyzeSseDump(raw, formatOverride) {
+  var parsed = parseSseDump(raw);
+  var detection = detectWireFormat(parsed.events);
+  var override = (formatOverride && formatOverride !== 'auto') ? String(formatOverride) : null;
+  var format = override || detection.format;
+  var model;
+  if (format === 'anthropic') model = reassembleAnthropic(parsed.events);
+  else if (format === 'openai') model = reassembleOpenAI(parsed.events);
+  else model = reassembleGeneric(parsed.events);
+
+  return {
+    parsed: parsed,
+    detection: detection,
+    format: format,
+    formatSource: override ? 'override' : 'auto',
+    model: model,
+    stats: computeStats(parsed, model, format),
+    timeline: buildTimeline(parsed.events, format),
+    findings: diagnoseStream(parsed, format, model)
+  };
+}
+
+function formatLabel(format) {
+  if (format === 'anthropic') return 'Anthropic Messages streaming';
+  if (format === 'openai') return 'OpenAI chat completions streaming';
+  return 'Unrecognised SSE';
+}
+
+function buildTextReport(result) {
+  var lines = [];
+  var i;
+  lines.push('LLM Stream Inspector report');
+  lines.push('Format: ' + formatLabel(result.format) + ' (' + result.formatSource + ')');
+  lines.push('Events: ' + result.stats.eventCount + ' | Bytes: ' + result.stats.totalBytes
+    + ' | ' + result.stats.blockLabel + ': ' + result.stats.contentBlocks
+    + ' | Text chars: ' + result.stats.textChars
+    + ' | Tool calls: ' + result.stats.toolCalls + ' (' + result.stats.validToolCalls + ' valid JSON)');
+  lines.push('');
+  lines.push('FINDINGS');
+  for (i = 0; i < result.findings.length; i++) {
+    var f = result.findings[i];
+    lines.push('[' + f.status.toUpperCase() + '] ' + f.title + ' (' + f.id + ')');
+    lines.push('  ' + f.summary);
+    if (f.explain) lines.push('  ' + f.explain);
+    for (var j = 0; j < f.evidence.length; j++) lines.push('  - ' + f.evidence[j]);
+    lines.push('');
+  }
+  lines.push('REASSEMBLED TEXT (' + result.model.text.length + ' chars)');
+  lines.push(result.model.text.length ? result.model.text : '(none)');
+  lines.push('');
+  if (result.model.toolCalls.length) {
+    lines.push('TOOL CALLS');
+    for (i = 0; i < result.model.toolCalls.length; i++) {
+      var t = result.model.toolCalls[i];
+      lines.push('- ' + t.label + ' [' + t.key + '] ' + (t.valid ? 'VALID JSON' : 'INVALID JSON: ' + t.error));
+      lines.push('  joined (' + t.fragmentCount + ' fragments): ' + t.joined);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/* =========================================================================
+   PART 2: samples.
+   ========================================================================= */
+
+/* A stream cut while a tool call was still being written: the text block
+   completes, the tool_use block never closes, the argument fragments stop
+   mid-JSON, the final line is severed mid-object, and there is no
+   message_delta or message_stop. */
+var SAMPLE_ANTHROPIC = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"id":"msg_01ExampleStreamId","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1842,"cache_creation_input_tokens":0,"cache_read_input_tokens":1536,"output_tokens":3}}}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+  '',
+  ': keep-alive comment emitted by the gateway',
+  '',
+  'event: ping',
+  'data: {"type":"ping"}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I will pull the"}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" current forecast before"}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" I answer that."}}',
+  '',
+  'event: content_block_stop',
+  'data: {"type":"content_block_stop","index":0}',
+  '',
+  'event: content_block_start',
+  'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01ExampleToolUse","name":"get_forecast","input":{}}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"loc"}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ation\\": \\"Spotsylvania, VA"}}',
+  '',
+  'event: ping',
+  'data: {"type":"ping"}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\", \\"days\\": "}}',
+  '',
+  'event: content_block_delta',
+  'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_del'
+].join('\n');
+
+/* A healthy stream in the OpenAI shape: text, a complete tool call whose
+   argument fragments join into valid JSON, a finish_reason, a usage chunk,
+   and the [DONE] sentinel. */
+var SAMPLE_OPENAI = [
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"content":"Checking the forecast"},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"content":" for you now."},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_EXAMPLE","type":"function","function":{"name":"get_forecast","arguments":""}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"location\\":"}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"Spotsylvania, VA\\","}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"days\\": 3}"}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+  '',
+  'data: {"id":"chatcmpl-EXAMPLE","object":"chat.completion.chunk","created":1780000000,"model":"example-chat-model","choices":[],"usage":{"prompt_tokens":412,"completion_tokens":38,"total_tokens":450}}',
+  '',
+  'data: [DONE]',
+  ''
+].join('\n');
+
+/* =========================================================================
+   PART 3: DOM layer. Guarded so PART 1 can be lifted out and run headless.
+   ========================================================================= */
+
+if (typeof document !== 'undefined') {
+  (function () {
+    var TIMELINE_PAGE = 400;
+    var THEME_KEY = 'llm-stream-inspector-theme';
+
+    var $ = function (id) { return document.getElementById(id); };
+
+    var els = {
+      dump: $('dump'),
+      format: $('format'),
+      status: $('status'),
+      analyze: $('analyze'),
+      clear: $('clear'),
+      sampleA: $('sample-anthropic'),
+      sampleO: $('sample-openai'),
+      theme: $('theme-toggle'),
+      empty: $('empty'),
+      results: $('results'),
+      verdict: $('detect-verdict'),
+      reasons: $('detect-reasons'),
+      findings: $('findings'),
+      reassembly: $('reassembly'),
+      stats: $('stats'),
+      bytype: $('bytype'),
+      timeline: $('timeline'),
+      timelineNote: $('timeline-note'),
+      copyReport: $('copy-report')
+    };
+
+    var lastResult = null;
+    var timelineShown = 0;
+    var debounceTimer = null;
+
+    function esc(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    /* ---- theme ---- */
+    function applyTheme(theme) {
+      var t = theme === 'light' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+      els.theme.textContent = t === 'dark' ? 'Light' : 'Dark';
+      els.theme.setAttribute('aria-label', 'Switch to ' + (t === 'dark' ? 'light' : 'dark') + ' theme');
+    }
+    function storedTheme() {
+      try { return window.localStorage.getItem(THEME_KEY); } catch (err) { return null; }
+    }
+    function storeTheme(t) {
+      try { window.localStorage.setItem(THEME_KEY, t); } catch (err) { /* private mode: keep going */ }
+    }
+    applyTheme(storedTheme() === 'light' ? 'light' : 'dark');
+    els.theme.addEventListener('click', function () {
+      var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      storeTheme(next);
+    });
+
+    /* ---- copy ---- */
+    function attachCopy(button, getText) {
+      button.addEventListener('click', function () {
+        var text = getText();
+        var label = button.getAttribute('data-label') || button.textContent;
+        button.setAttribute('data-label', label);
+        function done(ok) {
+          button.textContent = ok ? 'Copied' : 'Copy failed';
+          window.setTimeout(function () { button.textContent = label; }, 1400);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallbackCopy(text)); });
+        } else {
+          done(fallbackCopy(text));
+        }
+      });
+    }
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', 'readonly');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      document.body.appendChild(ta);
+      var ok = false;
+      try {
+        ta.select();
+        ok = document.execCommand ? document.execCommand('copy') : false;
+      } catch (err) { ok = false; }
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    /* ---- render ---- */
+    function statusClass(status) {
+      if (status === 'critical') return 'badge-bad';
+      if (status === 'warn') return 'badge-warn';
+      if (status === 'ok') return 'badge-ok';
+      return 'badge';
+    }
+
+    function barClass(kind) {
+      if (kind === 'tool') return 'tool';
+      if (kind === 'bad') return 'bad';
+      if (kind === 'text') return '';
+      return 'meta';
+    }
+
+    function renderDetection(result) {
+      var d = result.detection;
+      var html = '';
+      html += '<span class="badge badge-strong">' + esc(formatLabel(result.format)) + '</span>';
+      html += '<span class="badge">' + (result.formatSource === 'override' ? 'set manually' : 'auto-detected') + '</span>';
+      html += '<span class="badge">Anthropic signal ' + d.anthropicScore + '</span>';
+      html += '<span class="badge">OpenAI signal ' + d.openaiScore + '</span>';
+      if (d.ambiguous) html += '<span class="badge badge-warn">both shapes present</span>';
+      els.verdict.innerHTML = html;
+
+      var items = '';
+      for (var i = 0; i < d.reasons.length; i++) {
+        items += '<li' + (d.reasons[i].positive ? '' : ' class="neg"') + '>' + esc(d.reasons[i].text) + '</li>';
+      }
+      if (result.formatSource === 'override') {
+        items += '<li class="neg">Detection was overridden by the wire format selector, so reassembly used the '
+          + esc(formatLabel(result.format)) + ' rules regardless of the signals above.</li>';
+      }
+      if (result.format === 'unknown') {
+        items += '<li class="neg">With no format matched, reassembly is a best-effort probe of a few common text paths, not a vendor rule.</li>';
+      }
+      els.reasons.innerHTML = items || '<li class="neg">No signals to report.</li>';
+    }
+
+    function renderFindings(result) {
+      var html = '';
+      for (var i = 0; i < result.findings.length; i++) {
+        var f = result.findings[i];
+        html += '<div class="finding ' + esc(f.status) + '">';
+        html += '<div class="finding-head">';
+        html += '<span class="badge ' + statusClass(f.status) + '">' + esc(f.status) + '</span>';
+        html += '<span class="finding-title">' + esc(f.title) + '</span>';
+        html += '<span class="finding-id">' + esc(f.id) + '</span>';
+        html += '</div>';
+        html += '<p class="finding-summary">' + esc(f.summary) + '</p>';
+        if (f.explain) html += '<p class="finding-explain">' + esc(f.explain) + '</p>';
+        if (f.evidence && f.evidence.length) {
+          html += '<ul class="finding-evidence">';
+          for (var j = 0; j < f.evidence.length; j++) html += '<li>' + esc(f.evidence[j]) + '</li>';
+          html += '</ul>';
+        }
+        html += '</div>';
+      }
+      els.findings.innerHTML = html;
+    }
+
+    function renderReassembly(result) {
+      var m = result.model;
+      var html = '';
+
+      html += '<div class="out-head"><span class="out-label">Assistant text, concatenated in block order (' + m.text.length + ' chars)</span>'
+        + (m.text.length ? '<button class="btn btn-mini" type="button" data-copy="text">Copy text</button>' : '') + '</div>';
+      if (m.text.length) {
+        html += '<pre class="out">' + esc(m.text) + '</pre>';
+      } else {
+        html += '<p class="muted">No text was reassembled from this dump.</p>';
+      }
+
+      if (m.thinking && m.thinking.length) {
+        html += '<div class="out-head"><span class="out-label">Thinking text (' + m.thinking.length + ' chars)</span>'
+          + '<button class="btn btn-mini" type="button" data-copy="thinking">Copy thinking</button></div>';
+        html += '<pre class="out">' + esc(m.thinking) + '</pre>';
+      }
+
+      html += '<div class="out-head"><span class="out-label">Tool calls (' + m.toolCalls.length + ')</span></div>';
+      if (!m.toolCalls.length) {
+        html += '<p class="muted">No tool calls in this dump.</p>';
+      } else {
+        for (var i = 0; i < m.toolCalls.length; i++) {
+          var t = m.toolCalls[i];
+          html += '<div class="tool">';
+          html += '<div class="tool-head">';
+          html += '<span class="tool-name">' + esc(t.label) + '</span>';
+          html += '<span class="badge ' + (t.valid ? 'badge-ok' : 'badge-bad') + '">'
+            + (t.valid ? 'joined fragments parse as JSON' : 'joined fragments are NOT valid JSON') + '</span>';
+          html += '</div>';
+          html += '<div class="tool-body">';
+          html += '<p class="tool-meta">' + esc(t.key) + ' | type ' + esc(t.blockType)
+            + (t.id ? ' | id ' + esc(t.id) : '')
+            + ' | ' + t.fragmentCount + ' fragment(s) | ' + t.joined.length + ' chars joined'
+            + ' | ' + (t.closed ? 'closed' : 'never closed') + '</p>';
+          html += '<div class="out-head"><span class="out-label">' + (t.valid ? 'Parsed arguments' : 'Joined fragments, as-is') + '</span>'
+            + '<button class="btn btn-mini" type="button" data-copy="tool" data-tool="' + i + '">Copy</button></div>';
+          html += '<pre class="out' + (t.valid ? '' : ' bad') + '">' + esc(t.valid ? t.pretty : t.joined) + '</pre>';
+          if (!t.valid) {
+            html += '<p class="tool-note">Parse error: ' + esc(t.error || 'unknown')
+              + '. A fragment is never valid JSON on its own, so this is either a stream that stopped before the arguments finished, or code that parsed a fragment instead of the joined string.</p>';
+          }
+          html += '</div></div>';
+        }
+      }
+
+      if (m.blocks.length) {
+        html += '<div class="out-head"><span class="out-label">' + esc(result.stats.blockLabel) + '</span></div>';
+        html += '<div class="table-scroll"><table><thead><tr>'
+          + '<th class="num" scope="col">Index</th><th scope="col">Type</th><th scope="col">Name</th>'
+          + '<th class="num" scope="col">Deltas</th><th class="num" scope="col">Chars</th>'
+          + '<th class="num" scope="col">Arg fragments</th><th scope="col">State</th>'
+          + '</tr></thead><tbody>';
+        for (var b = 0; b < m.blocks.length; b++) {
+          var blk = m.blocks[b];
+          var state = blk.closed ? 'closed' : (blk.opened ? 'OPEN, never closed' : 'never opened');
+          html += '<tr>'
+            + '<td class="num">' + blk.blockIndex + '</td>'
+            + '<td class="type">' + esc(blk.type || '(unknown)') + '</td>'
+            + '<td class="type">' + esc(blk.name || '-') + '</td>'
+            + '<td class="num">' + blk.deltaCount + '</td>'
+            + '<td class="num">' + (blk.text.length + blk.thinking.length) + '</td>'
+            + '<td class="num">' + blk.fragments.length + '</td>'
+            + '<td class="type' + (blk.closed ? '' : ' bad') + '">' + esc(state) + '</td>'
+            + '</tr>';
+        }
+        html += '</tbody></table></div>';
+      }
+
+      els.reassembly.innerHTML = html;
+
+      var buttons = els.reassembly.querySelectorAll('button[data-copy]');
+      for (var k = 0; k < buttons.length; k++) {
+        (function (btn) {
+          var kind = btn.getAttribute('data-copy');
+          attachCopy(btn, function () {
+            if (kind === 'text') return lastResult ? lastResult.model.text : '';
+            if (kind === 'thinking') return lastResult ? lastResult.model.thinking : '';
+            var idx = parseInt(btn.getAttribute('data-tool'), 10);
+            if (!lastResult || !lastResult.model.toolCalls[idx]) return '';
+            var tool = lastResult.model.toolCalls[idx];
+            return tool.valid ? tool.pretty : tool.joined;
+          });
+        })(buttons[k]);
+      }
+    }
+
+    function renderStats(result) {
+      var s = result.stats;
+      var cells = [
+        ['Events', s.eventCount],
+        ['Total bytes', formatBytes(s.totalBytes)],
+        ['Distinct types', s.distinctTypes],
+        [s.blockLabel, s.contentBlocks],
+        ['Text chars', s.textChars],
+        ['Tool calls', s.toolCalls + (s.toolCalls ? ' (' + s.validToolCalls + ' valid)' : '')],
+        ['Comment lines', s.commentCount],
+        ['Unparsed events', s.parseErrors]
+      ];
+      if (result.format === 'anthropic') cells.push(['Ping events', s.pings]);
+      if (s.thinkingChars) cells.push(['Thinking chars', s.thinkingChars]);
+      var html = '';
+      for (var i = 0; i < cells.length; i++) {
+        html += '<div class="stat"><span class="k">' + esc(cells[i][0]) + '</span><span class="v">' + esc(cells[i][1]) + '</span></div>';
+      }
+      els.stats.innerHTML = html;
+
+      var badges = '';
+      for (var t = 0; t < s.byType.length; t++) {
+        badges += '<span class="badge">' + esc(s.byType[t].type) + ' <strong>' + s.byType[t].count + '</strong></span>';
+      }
+      els.bytype.innerHTML = badges;
+    }
+
+    function renderTimeline(result, limit) {
+      var rows = result.timeline.rows;
+      var shown = Math.min(limit, rows.length);
+      var html = '';
+      for (var i = 0; i < shown; i++) {
+        var r = rows[i];
+        html += '<tr>'
+          + '<td class="num">' + r.index + '</td>'
+          + '<td class="type' + (r.bad ? ' bad' : '') + '">' + esc(r.type) + '</td>'
+          + '<td class="num">' + r.bytes + '</td>'
+          + '<td><span class="bar-track"><span class="bar-fill ' + esc(barClass(r.kind))
+          + '" style="width:' + r.barPercent + '%"></span></span></td>'
+          + '<td class="payload">' + esc(r.payload) + '</td>'
+          + '</tr>';
+      }
+      if (shown < rows.length) {
+        html += '<tr><td class="more-row" colspan="5">'
+          + '<button class="btn btn-mini" type="button" id="timeline-more">Show the remaining '
+          + (rows.length - shown) + ' events</button></td></tr>';
+      }
+      els.timeline.innerHTML = html;
+      timelineShown = shown;
+      els.timelineNote.textContent = 'showing ' + shown + ' of ' + rows.length
+        + ' | bar width is payload bytes relative to the largest event';
+      var more = $('timeline-more');
+      if (more) {
+        more.addEventListener('click', function () {
+          renderTimeline(lastResult, lastResult.timeline.rows.length);
+        });
+      }
+    }
+
+    function render(result) {
+      lastResult = result;
+      renderDetection(result);
+      renderFindings(result);
+      renderReassembly(result);
+      renderStats(result);
+      renderTimeline(result, TIMELINE_PAGE);
+      els.empty.hidden = true;
+      els.results.hidden = false;
+    }
+
+    function showEmpty(message) {
+      lastResult = null;
+      els.results.hidden = true;
+      els.empty.hidden = false;
+      els.status.textContent = message || '';
+      els.status.className = 'status';
+    }
+
+    function run() {
+      var raw = els.dump.value;
+      if (trimStr(raw) === '') {
+        showEmpty('Paste a dump or load a sample to begin.');
+        return;
+      }
+      try {
+        var result = analyzeSseDump(raw, els.format.value);
+        render(result);
+        var critical = 0;
+        for (var i = 0; i < result.findings.length; i++) if (result.findings[i].status === 'critical') critical++;
+        els.status.className = 'status' + (critical ? ' bad' : '');
+        els.status.textContent = result.stats.eventCount + ' events parsed, '
+          + result.findings.length + ' findings, ' + critical + ' critical.';
+      } catch (err) {
+        els.status.className = 'status bad';
+        els.status.textContent = 'Could not analyze this input: ' + ((err && err.message) ? err.message : 'unexpected error')
+          + '. If the dump is very large, try a smaller slice.';
+      }
+    }
+
+    function scheduleRun() {
+      if (debounceTimer) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(run, 250);
+    }
+
+    els.analyze.addEventListener('click', run);
+    els.dump.addEventListener('input', scheduleRun);
+    els.format.addEventListener('change', run);
+    els.dump.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+    });
+    els.clear.addEventListener('click', function () {
+      els.dump.value = '';
+      els.format.value = 'auto';
+      showEmpty('Cleared.');
+      els.dump.focus();
+    });
+    els.sampleA.addEventListener('click', function () {
+      els.dump.value = SAMPLE_ANTHROPIC;
+      els.format.value = 'auto';
+      run();
+    });
+    els.sampleO.addEventListener('click', function () {
+      els.dump.value = SAMPLE_OPENAI;
+      els.format.value = 'auto';
+      run();
+    });
+    attachCopy(els.copyReport, function () { return lastResult ? buildTextReport(lastResult) : ''; });
+
+    els.status.textContent = 'Ready. Nothing is uploaded.';
+  })();
+}
+</script>
+</body>
+</html>
