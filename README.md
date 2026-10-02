@@ -2,9 +2,18 @@
 
 Paste a raw Server-Sent Events dump from a streaming LLM response and get it parsed, reassembled, and diagnosed in your browser.
 
-## Live demo
+**Live demo:** https://0xelitesystem.github.io/llm-stream-inspector/
 
-https://0xelitesystem.github.io/llm-stream-inspector/
+## Use
+
+1. Paste a raw Server-Sent Events dump from a streaming LLM response, or press **Load sample (Anthropic)** or **Load sample (OpenAI)**.
+2. Press **Analyze**. The wire format is detected for you, and you can override it.
+3. Read the findings, then check the reassembled text, the rebuilt tool-call arguments and the event timeline.
+4. Press **Copy report** for a plain-text report you can drop into a ticket.
+
+## Why this exists
+
+When a streamed response stops mid-sentence or a tool call arrives as invalid JSON, the SDK hides the reason and the raw event stream shows it. This tool parses that stream and names the failure. A stream dump carries prompts and tool arguments, so it runs as one HTML file in your browser, with no tracking and no server, under the MIT license.
 
 ## Features
 
@@ -34,6 +43,21 @@ One thing worth internalising: a streamed tool-argument fragment is almost never
 ## Privacy
 
 Everything runs in your browser. A streamed response carries the user prompt, retrieved documents, and tool arguments, which is exactly the data that should not be pasted into a stranger's parser, so nothing you paste here is uploaded, logged, or sent anywhere. The page has no analytics, no external dependencies, and makes no network requests of any kind. Verify by viewing the page source, or by opening DevTools and watching the network tab while you use it. For anything sensitive, save the file and open it offline.
+
+The only thing written to storage is your light or dark theme choice, saved in `localStorage` under the key `llm-stream-inspector-theme`.
+
+## Run locally
+
+```bash
+git clone https://github.com/0xelitesystem/llm-stream-inspector
+cd llm-stream-inspector
+```
+
+Open `index.html` in any modern browser. Or serve the folder with `python -m http.server 8000` and visit http://localhost:8000/.
+
+## Build
+
+No build step. The whole tool is one `index.html` file with its CSS and JavaScript inline, and nothing to install.
 
 ## License
 
